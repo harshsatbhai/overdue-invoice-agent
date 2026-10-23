@@ -8,7 +8,12 @@ def get_conn():
     conn.row_factory = sqlite3.Row
     return conn
 
+import os
+
 def init_db():
+    # Create the data directory if it doesn't exist (needed for Render)
+    os.makedirs("data", exist_ok=True)
+    
     conn = get_conn()
     conn.executescript("""
         CREATE TABLE IF NOT EXISTS invoices (id TEXT PRIMARY KEY, client_name TEXT, client_email TEXT, amount REAL, currency TEXT, due_date TEXT, status TEXT DEFAULT 'unpaid', portal_invoice_id TEXT, last_synced_at TEXT);
