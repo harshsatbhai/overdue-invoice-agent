@@ -122,6 +122,27 @@ def api_clear_promise(reminder_id: int):
 @router.get("/api/promises")
 def api_promises(): return get_promise_summary()
 
+from fastapi import BackgroundTasks
+
+@router.post("/api/run_tests")
+def api_run_tests(background_tasks: BackgroundTasks):
+    """Trigger the TC1-TC4 test suite from the dashboard."""
+    from scenarios.run_all import main as run_tests
+    import threading
+    
+    # Run tests in background so the UI doesn't freeze
+    def run_suite():
+        import sys
+        # Fake the command line args so it runs
+        sys.argv = ["run_all.py", "--no-llm"] 
+        try:
+            run_tests()
+        except SystemExit:
+            pass # Catch the exit code
+            
+    background_tasks.add_task(run_suite)
+    return {"ok": True, "message": "Tests are running in the background. Refresh in 10 seconds."}
+
 def _get_pending_approvals() -> list:
     conn = get_conn()
     rows = conn.execute("SELECT id, invoice_id, action_type, proposed_payload, approved, executed_at, result, idempotency_key FROM action_audit WHERE approved=0 AND (result IS NULL OR result='') ORDER BY id DESC").fetchall()
