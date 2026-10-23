@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>InvoiceChase — Overdue Invoice Follow-up</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 0; padding: 24px; background: #f7f8fa; color: #1a1a1a; }
+    h1 { font-size: 22px; margin: 0 0 4px; }
+    .sub { color: #666; font-size: 13px; margin-bottom: 20px; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; margin-bottom: 16px; }
+    .card { background: #fff; border: 1px solid #e5e7eb; border-radius: 10px; padding: 16px; box-shadow: 0 1px 2px rgba(0,0,0,0.03); margin-bottom: 16px; }
+    .card h2 { font-size: 14px; text-transform: uppercase; letter-spacing: .05em; color: #555; margin: 0 0 12px; }
+    .big { font-size: 30px; font-weight: 700; color: #111; }
+    .big-promise { color: #15803d; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid #eee; vertical-align: top; }
+    th { color: #666; font-weight: 600; font-size: 12px; }
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; }
+    .badge-unpaid { background: #fde68a; color: #92400e; }
+    .badge-paid { background: #bbf7d0; color: #166534; }
+    .badge-disputed { background: #fecaca; color: #991b1b; }
+    .badge-friendly { background: #dbeafe; color: #1e40af; }
+    .badge-firm { background: #fed7aa; color: #9a3412; }
+    .badge-final_notice { background: #fecaca; color: #7f1d1d; }
+    .badge-sent { background: #bbf7d0; color: #166534; }
+    .badge-pending { background: #fef3c7; color: #92400e; }
+    .badge-pass { background: #bbf7d0; color: #166534; }
+    .badge-fail { background: #fecaca; color: #991b1b; }
+    .badge-promise { background: #dcfce7; color: #166534; }
+    .badge-promise-overdue { background: #fecaca; color: #991b1b; }
+    .btn { border: 0; padding: 6px 12px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer; margin-right: 4px; }
+    .btn-approve { background: #16a34a; color: #fff; } .btn-approve:hover { background: #15803d; }
+    .btn-reject { background: #dc2626; color: #fff; } .btn-reject:hover { background: #b91c1c; }
+    .btn-send { background: #2563eb; color: #fff; padding: 10px 20px; font-size: 14px; } .btn-send:hover:not(:disabled) { background: #1d4ed8; }
+    .btn-send:disabled { background: #9ca3af; color: #f3f4f6; cursor: not-allowed; opacity: 0.85; }
+    .btn-redraft { background: #7c3aed; color: #fff; padding: 6px 12px; font-size: 12px; } .btn-redraft:hover { background: #6d28d9; }
+    .btn-clear { background: #e5e7eb; color: #991b1b; padding: 2px 8px; font-size: 11px; border-radius: 50%; width: 22px; height: 22px; line-height: 1; font-weight: 700; } .btn-clear:hover { background: #fecaca; }
+    pre.body-preview { background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 6px; padding: 10px; font-size: 12px; white-space: pre-wrap; margin: 8px 0 0; max-height: 260px; overflow-y: auto; }
+    pre.evidence { background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 6px; padding: 10px; font-size: 11px; white-space: pre-wrap; margin: 8px 0 0; max-height: 200px; overflow-y: auto; }
+    .muted { color: #888; font-size: 12px; }
+    .empty { color: #888; padding: 10px; font-style: italic; }
+    details summary { cursor: pointer; color: #2563eb; font-size: 12px; }
+    .sender-panel { background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; padding: 14px; margin-bottom: 16px; }
+    .sender-panel h2 { color: #1e40af; margin-bottom: 10px; }
+    .carousel-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; gap: 12px; flex-wrap: wrap; }
+    .carousel-header h2 { margin: 0; }
+    .carousel-nav { display: flex; align-items: center; gap: 10px; background: #f3f4f6; border-radius: 8px; padding: 4px 8px; }
+    .carousel-nav button { background: #fff; border: 1px solid #d1d5db; border-radius: 6px; width: 32px; height: 32px; font-size: 16px; font-weight: 700; cursor: pointer; color: #374151; display: flex; align-items: center; justify-content: center; }
+    .carousel-nav button:hover:not(:disabled) { background: #e5e7eb; } .carousel-nav button:disabled { opacity: 0.35; cursor: not-allowed; }
+    .carousel-counter { font-size: 13px; font-weight: 600; color: #111; min-width: 48px; text-align: center; }
+    .draft-slide { display: none; } .draft-slide.active { display: block; }
+    .draft-meta { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+    .modal-backdrop { display: none; position: fixed; inset: 0; background: rgba(15,23,42,0.5); z-index: 1000; align-items: center; justify-content: center; }
+    .modal-backdrop.open { display: flex; }
+    .modal { background: #fff; border-radius: 12px; padding: 22px 24px; max-width: 460px; width: 90%; box-shadow: 0 20px 40px rgba(0,0,0,0.15); }
+    .modal h3 { margin: 0 0 8px; font-size: 16px; color: #111; }
+    .modal p { margin: 0 0 18px; font-size: 13px; color: #4b5563; line-height: 1.5; }
+    .modal .actions { display: flex; justify-content: flex-end; gap: 8px; }
+    .btn-cancel { background: #e5e7eb; color: #374151; padding: 8px 16px; border-radius: 6px; font-size: 13px; font-weight: 600; border: 0; cursor: pointer; } .btn-cancel:hover { background: #d1d5db; }
+    .btn-danger { background: #dc2626; color: #fff; padding: 8px 16px; border-radius: 6px; font-size: 13px; font-weight: 600; border: 0; cursor: pointer; } .btn-danger:hover { background: #b91c1c; }
+    .btn-primary { background: #2563eb; color: #fff; padding: 8px 16px; border-radius: 6px; font-size: 13px; font-weight: 600; border: 0; cursor: pointer; } .btn-primary:hover { background: #1d4ed8; } .btn-primary:disabled { background: #9ca3af; cursor: not-allowed; }
+    .modal .invoice-context { background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 6px; padding: 10px; font-size: 12px; margin-bottom: 14px; }
+    .client-list { background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 6px; padding: 10px; margin-bottom: 14px; max-height: 220px; overflow-y: auto; }
+    .client-list table { font-size: 12px; } .client-list td { padding: 6px 4px; }
+    .success-modal { text-align: center; }
+    .success-modal h3 { color: #16a34a; font-size: 18px; margin-bottom: 6px; }
+    .success-modal p { color: #4b5563; margin-bottom: 18px; }
+    .tick-wrap { display: flex; justify-content: center; margin: 4px 0 16px; }
+    .tick-svg { width: 72px; height: 72px; stroke: #16a34a; stroke-width: 5; fill: none; stroke-linecap: round; stroke-linejoin: round; }
+    .tick-circle { stroke-dasharray: 166; stroke-dashoffset: 166; animation: tick-circle 0.6s cubic-bezier(0.65, 0, 0.45, 1) forwards; }
+    .tick-check { stroke-dasharray: 48; stroke-dashoffset: 48; animation: tick-check 0.35s cubic-bezier(0.65, 0, 0.45, 1) 0.55s forwards; }
+    @keyframes tick-circle { to { stroke-dashoffset: 0; } } @keyframes tick-check { to { stroke-dashoffset: 0; } }
+    .sent-clients-list { text-align: left; background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 6px; padding: 10px; margin: 0 0 16px; max-height: 200px; overflow-y: auto; }
+    .sent-clients-list .item { font-size: 12px; padding: 6px 4px; border-bottom: 1px solid #dcfce7; display: flex; justify-content: space-between; }
+    .sent-clients-list .item:last-child { border-bottom: 0; } .sent-clients-list .rec { color: #166534; font-family: monospace; font-size: 11px; }
+  </style>
+</head>
+<body>
+
+  <h1>InvoiceChase — Overdue Invoice Follow-up Agent</h1>
+  <div class="sub">Generated {{ generated_at }} · Today {{ today }} · <a href="/docs">API docs</a></div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Still-Unpaid Total</h2>
+      <div class="big">${{ "%.2f"|format(unpaid_total) }}</div>
+      <div class="muted">{{ invoices | selectattr("status", "equalto", "unpaid") | list | length }} unpaid invoice(s)</div>
+    </div>
+    <div class="card">
+      <h2>Promised Dates ({{ promise_summary.count }})</h2>
+      {% if promise_summary.count > 0 %}
+        <div class="big big-promise">{{ promise_summary.count }}</div>
+        {% if promise_summary.overdue_promises %}<div class="muted" style="color:#b91c1c;font-weight:600;">⚠ {{ promise_summary.overdue_promises | length }} promise(s) past due</div>{% endif %}
+        <table style="margin-top:8px;"><tbody>
+          {% for p in promise_summary["items"] %}
+            <tr>
+              <td>{{ p.invoice_id }}</td><td class="muted">{{ p.client_name }}</td>
+              <td><span class="badge {% if p.overdue_promise %}badge-promise-overdue{% else %}badge-promise{% endif %}">{{ p.promise_to_pay_date }}</span>
+                {% if p.days_until is not none %}<br/><span class="muted">{% if p.days_until < 0 %}past due{% elif p.days_until == 0 %}today{% else %}in {{ p.days_until }}d{% endif %}</span>{% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody></table>
+      {% else %}<div class="muted">No promises recorded yet. Awaiting client replies...</div>{% endif %}
+    </div>
+    <div class="card">
+      <h2>Skipped / Excluded</h2>
+      {% if excluded_invoices %}
+        <table><tbody>
+          {% for i in excluded_invoices %}
+            <tr><td>{{ i.id }}<br/><span class="muted">{{ i.client_name }}</span></td>
+              <td>{% if i.status == "paid" %}<span class="badge badge-paid">paid since last run</span>{% else %}<span class="badge badge-disputed">disputed — reminders paused</span>{% endif %}</td></tr>
+          {% endfor %}
+        </tbody></table>
+      {% else %}<div class="empty">No invoices excluded.</div>{% endif %}
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Unresolved Items ({{ unresolved_invoices | length }})</h2>
+    {% if unresolved_invoices %}
+      <table><thead><tr><th>Invoice</th><th>Client</th><th>Days Overdue</th><th>Reason</th></tr></thead><tbody>
+        {% for u in unresolved_invoices %}
+          <tr><td>{{ u.id }}</td><td>{{ u.client_name }}</td><td><span class="badge badge-unpaid">{{ u.days_overdue }}d</span></td><td class="muted">{{ u.reason }}</td></tr>
+        {% endfor %}
+      </tbody></table>
+    {% else %}<div class="muted">All overdue invoices have been chased in the last 7 days.</div>{% endif %}
+  </div>
+
+  <div class="sender-panel">
+    <h2>Send Approved Reminders</h2>
+    <button class="btn btn-send" id="send-btn" onclick="openSendConfirm()" {% if approved_pending_send == 0 %}disabled{% endif %}>
+      {% if approved_pending_send == 0 %}Send Reminders{% elif approved_pending_send == 1 %}Send 1 Reminders{% else %}Send {{ approved_pending_send }} Reminders{% endif %}
+    </button>
+    <span id="sender-status" class="muted" style="margin-left:12px;"></span>
+  </div>
+
+  <div class="card">
+    <div class="carousel-header">
+      <h2>Pending Approvals ({{ pending_approvals | length }})</h2>
+      <div style="display:flex; align-items:center; gap:12px;">
+        {% if pending_approvals %}
+        <div class="carousel-nav">
+          <button id="prev-btn" onclick="carouselPrev()" title="Previous draft">‹</button>
+          <span class="carousel-counter" id="carousel-counter">1/{{ pending_approvals | length }}</span>
+          <button id="next-btn" onclick="carouselNext()" title="Next draft">›</button>
+        </div>
+        {% endif %}
+        <button class="btn btn-redraft" id="redraft-btn" onclick="redraftAll()">Draft All Overdue Invoices</button>
+        <span id="redraft-status" class="muted" style="margin-left:8px;"></span>
+      </div>
+    </div>
+
+    {% if pending_approvals %}
+      <div id="carousel-container">
+        {% for p in pending_approvals %}
+        <div class="draft-slide {% if loop.first %}active{% endif %}" data-index="{{ loop.index0 }}">
+          <div class="draft-meta"><span class="muted">Draft {{ loop.index }} of {{ pending_approvals | length }}</span></div>
+          <table><thead><tr><th>Invoice</th><th>Tone</th><th>Subject</th><th>Decision</th></tr></thead><tbody>
+              <tr><td>{{ p.invoice_id }}</td><td><span class="badge badge-{{ p.tone or 'friendly' }}">{{ p.tone or "—" }}</span></td>
+                <td>{{ p.subject or "(no subject)" }}<br/><span class="muted">to: {{ p.to_email or "—" }}</span></td>
+                <td><button class="btn btn-approve" onclick="decide({{ p.id }}, 'approve')">Approve</button><button class="btn btn-reject"  onclick="decide({{ p.id }}, 'reject')">Reject</button></td></tr>
+          </tbody></table>
+          <pre class="body-preview">{{ p.body or "" }}</pre>
+        </div>
+        {% endfor %}
+      </div>
+    {% else %}<div class="empty">No pending reminders.</div>{% endif %}
+  </div>
+
+  <div class="card">
+    <h2>Invoice States</h2>
+    <table><thead><tr><th>Invoice</th><th>Client</th><th>Amount</th><th>Status</th><th>Portal ID</th><th>Last Synced</th></tr></thead><tbody>
+      {% for inv in invoices %}
+        <tr><td>{{ inv.id }}</td><td>{{ inv.client_name }}</td><td>{{ inv.currency }} {{ "%.2f"|format(inv.amount) }}</td>
+          <td><span class="badge badge-{{ inv.status }}">{{ inv.status }}</span></td><td class="muted">{{ inv.portal_invoice_id or "—" }}</td><td class="muted">{{ inv.last_synced_at or "—" }}</td></tr>
+      {% endfor %}
+    </tbody></table>
+  </div>
+
+  <div class="card">
+    <h2>Reminder Log ({{ sent_reminders | length }} sent · {{ pending_reminders | length }} pending)</h2>
+    {% if sent_reminders or pending_reminders %}
+      <table><thead><tr><th>Sent At</th><th>Invoice</th><th>Tone</th><th>Subject</th><th>Status</th><th>Portal Record</th><th>Promise to Pay</th></tr></thead><tbody>
+        {% for r in sent_reminders + pending_reminders %}
+          <tr><td class="muted">{{ r.sent_at or "—" }}</td><td>{{ r.invoice_id }}</td><td><span class="badge badge-{{ r.tone }}">{{ r.tone }}</span></td>
+            <td>{{ r.email_subject or "—" }}</td><td><span class="badge badge-{{ r.status }}">{{ r.status }}</span></td><td class="muted">{{ r.portal_record_id or "—" }}</td>
+            <td>
+              {% if r.promise_to_pay_date %}
+                <span class="badge badge-promise">{{ r.promise_to_pay_date }}</span>
+                <span class="muted" style="font-size:10px;">(auto)</span>
+                <button class="btn btn-clear" title="Clear promise" onclick="openClearModal({{ r.id }}, '{{ r.invoice_id }}', '{{ r.promise_to_pay_date }}')">×</button>
+              {% else %}
+                <span class="muted">Awaiting reply...</span>
+              {% endif %}
+            </td></tr>
+        {% endfor %}
+      </tbody></table>
+    {% else %}<div class="empty">No reminders logged yet.</div>{% endif %}
+  </div>
+
+  <div class="card">
+    <h2>Test Evidence (TC1–TC4)</h2>
+    {% if test_runs %}
+      <table><thead><tr><th>TC</th><th>Expected</th><th>Actual</th><th>Result</th><th>Evidence</th></tr></thead><tbody>
+        {% for t in test_runs %}
+          <tr><td><strong>{{ t.tc_id }}</strong></td><td>{{ t.expected }}</td><td>{{ t.actual }}</td>
+            <td>{% if t.passed %}<span class="badge badge-pass">PASS</span>{% else %}<span class="badge badge-fail">FAIL</span>{% endif %}</td>
+            <td><details><summary>view JSON</summary><pre class="evidence">{{ t.evidence_json }}</pre>{% if t.notes %}<div class="muted">notes: {{ t.notes }}</div>{% endif %}<div class="muted">run at: {{ t.run_at }}</div></details></td></tr>
+        {% endfor %}
+      </tbody></table>
+    {% else %}<div class="empty">No test runs yet. Run <code>python -m scenarios.run_all</code>.</div>{% endif %}
+  </div>
+
+  <!-- Modals -->
+  <div class="modal-backdrop" id="clear-modal" onclick="closeClearModalIfBackdrop(event)">
+    <div class="modal" role="dialog" aria-modal="true">
+      <h3>Delete promise-to-pay date?</h3>
+      <div class="invoice-context"><strong id="clear-invoice">—</strong><br/><span class="muted">Promise: <span id="clear-date">—</span></span></div>
+      <p>This will clear the recorded promise-to-pay date for this reminder.</p>
+      <div class="actions"><button class="btn-cancel" onclick="closeClearModal()">Cancel</button><button class="btn-danger" id="clear-confirm-btn" onclick="confirmClearPromise()">Delete</button></div>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" id="send-confirm-modal">
+    <div class="modal" role="dialog" aria-modal="true">
+      <h3>Send reminder emails?</h3>
+      <p>You are about to send reminder emails to the following clients:</p>
+      <div class="client-list" id="send-client-list"><div class="muted">Loading…</div></div>
+      <p class="muted" style="margin:0 0 14px;">This action cannot be undone.</p>
+      <div class="actions"><button class="btn-cancel" onclick="closeSendConfirm()">Cancel</button><button class="btn-primary" id="send-confirm-btn" onclick="confirmSend()">Send Now</button></div>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" id="send-success-modal">
+    <div class="modal success-modal" role="dialog" aria-modal="true">
+      <div class="tick-wrap"><svg class="tick-svg" viewBox="0 0 52 52"><circle class="tick-circle" cx="26" cy="26" r="25" /><path class="tick-check" d="M14 27 l8 8 l16 -16" /></svg></div>
+      <h3>Reminders sent successfully</h3>
+      <p id="send-success-summary">All approved reminders have been delivered.</p>
+      <div class="sent-clients-list" id="send-success-list"></div>
+      <div class="actions" style="justify-content:center;"><button class="btn-primary" onclick="closeSendSuccess()">Done</button></div>
+    </div>
+  </div>
+
+  <script>
+    let _carouselIndex = 0, _carouselSlides = [];
+    function _initCarousel() { _carouselSlides = Array.from(document.querySelectorAll(".draft-slide")); _carouselIndex = 0; _renderCarousel(); }
+    function _renderCarousel() {
+      if (_carouselSlides.length === 0) return;
+      _carouselSlides.forEach((el, i) => { el.classList.toggle("active", i === _carouselIndex); });
+      const counter = document.getElementById("carousel-counter"), prev = document.getElementById("prev-btn"), next = document.getElementById("next-btn");
+      if (counter) counter.textContent = `${_carouselIndex + 1}/${_carouselSlides.length}`;
+      if (prev) prev.disabled = _carouselIndex === 0;
+      if (next) next.disabled = _carouselIndex >= _carouselSlides.length - 1;
+    }
+    function carouselPrev() { if (_carouselIndex > 0) { _carouselIndex--; _renderCarousel(); } }
+    function carouselNext() { if (_carouselIndex < _carouselSlides.length - 1) { _carouselIndex++; _renderCarousel(); } }
+    document.addEventListener("DOMContentLoaded", _initCarousel);
+
+    async function decide(id, action) {
+      try {
+        const r = await fetch(`/api/${action}/${id}`, { method: "POST" });
+        if (!r.ok) { const d = await r.json(); throw new Error(d.detail || r.statusText); }
+        window.location.reload();
+      } catch (e) { alert(`Failed: ${e.message}`); }
+    }
+
+    async function openSendConfirm() {
+      const list = document.getElementById("send-client-list");
+      list.innerHTML = '<div class="muted">Loading…</div>';
+      document.getElementById("send-confirm-modal").classList.add("open");
+      try {
+        const r = await fetch("/api/approved_clients"); const data = await r.json();
+        if (!r.ok) throw new Error(data.detail || r.statusText);
+        if (data.count === 0) { list.innerHTML = '<div class="muted">No approved reminders to send.</div>'; document.getElementById("send-confirm-btn").disabled = true; return; }
+        list.innerHTML = `<table><tbody>${data.clients.map(c => `<tr><td><strong>${c.client_name}</strong><br/><span class="muted">${c.invoice_id} · ${c.client_email}</span></td><td><span class="badge badge-${c.tone || 'friendly'}">${c.tone || '—'}</span></td></tr>`).join("")}</tbody></table>`;
+        document.getElementById("send-confirm-btn").disabled = false;
+      } catch (e) { list.innerHTML = `<div class="muted">Error: ${e.message}</div>`; document.getElementById("send-confirm-btn").disabled = true; }
+    }
+
+    function closeSendConfirm() { document.getElementById("send-confirm-modal").classList.remove("open"); }
+    async function confirmSend() {
+      const btn = document.getElementById("send-confirm-btn"); btn.disabled = true; btn.textContent = "Sending…";
+      try {
+        const r = await fetch("/api/run_sender", { method: "POST" }); const data = await r.json();
+        if (!r.ok) throw new Error(data.detail || r.statusText);
+        closeSendConfirm();
+        document.getElementById("send-success-summary").textContent = `Sent ${data.sent_count} reminder(s) successfully.`;
+        const list = document.getElementById("send-success-list");
+        list.innerHTML = data.sent_clients?.length ? data.sent_clients.map(c => `<div class="item"><span><strong>${c.client_name}</strong> · ${c.invoice_id}</span><span class="rec">${c.portal_record_id || '—'}</span></div>`).join("") : '<div class="muted">No clients sent.</div>';
+        document.getElementById("send-success-modal").classList.add("open");
+      } catch (e) { btn.disabled = false; btn.textContent = "Send Now"; alert(`Failed: ${e.message}`); }
+    }
+
+    function closeSendSuccess() { document.getElementById("send-success-modal").classList.remove("open"); window.location.reload(); }
+
+    async function redraftAll() {
+      if (!confirm("Draft reminders for all overdue invoices? Existing pending drafts will be replaced.")) return;
+      const btn = document.getElementById("redraft-btn"), status = document.getElementById("redraft-status");
+      btn.disabled = true; status.textContent = "Drafting…";
+      try {
+        const r = await fetch("/api/redraft_all", { method: "POST" }); const data = await r.json();
+        if (!r.ok) throw new Error(data.detail || r.statusText);
+        status.textContent = `Drafted ${data.created} reminder(s). Reloading…`; setTimeout(() => window.location.reload(), 800);
+      } catch (e) { status.textContent = `Error: ${e.message}`; btn.disabled = false; }
+    }
+
+    let _pendingClearId = null;
+    function openClearModal(id, invId, date) { _pendingClearId = id; document.getElementById("clear-invoice").textContent = invId; document.getElementById("clear-date").textContent = date; document.getElementById("clear-modal").classList.add("open"); }
+    function closeClearModal() { _pendingClearId = null; document.getElementById("clear-modal").classList.remove("open"); }
+    function closeClearModalIfBackdrop(ev) { if (ev.target.id === "clear-modal") closeClearModal(); }
+    async function confirmClearPromise() {
+      if (_pendingClearId === null) return;
+      const btn = document.getElementById("clear-confirm-btn"); btn.disabled = true; btn.textContent = "Deleting…";
+      try {
+        const r = await fetch(`/api/promise/${_pendingClearId}`, { method: "DELETE" }); const data = await r.json();
+        if (!r.ok) throw new Error(data.detail || r.statusText);
+        closeClearModal(); window.location.reload();
+      } catch (e) { btn.disabled = false; btn.textContent = "Delete"; alert(`Failed: ${e.message}`); }
+    }
+
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") { if (document.getElementById("clear-modal").classList.contains("open")) closeClearModal(); if (document.getElementById("send-confirm-modal").classList.contains("open")) closeSendConfirm(); }
+    });
+  </script>
+</body>
+</html>

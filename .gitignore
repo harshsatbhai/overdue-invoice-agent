@@ -1,0 +1,26 @@
+# Environment variables (contains your secret API keys!)
+.env
+.env.local
+
+# Python virtual environment
+.venv/
+venv/
+env/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# SQLite Database (don't upload local data)
+data/
+*.db
+*.sqlite3
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
