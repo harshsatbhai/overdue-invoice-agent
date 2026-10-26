@@ -113,7 +113,7 @@ def api_run_sender():
             "TC1", json.dumps({"sent_via": "dashboard"}), "sent once with portal record",
             f"status=sent, count={sent_count}", json.dumps(results), True, "Auto-generated from dashboard send"
         )
-    
+
     save_test_run("TC2", json.dumps({"invoice": "INV-004"}), "excluded", "exclude (status=paid)", json.dumps({"reason": "status=paid"}), True, "Verified planner exclusion")
     save_test_run("TC3", json.dumps({"invoice": "INV-005"}), "reminders paused for that invoice", "exclude (status=disputed)", json.dumps({"reason": "status=disputed"}), True, "Verified planner exclusion")
     save_test_run("TC4", json.dumps({"invoice": "INV-003"}), "sent history checked before retry", "timeout_checked", json.dumps({"prevented_duplicate": True}), True, "Verified idempotency")
@@ -125,7 +125,7 @@ def api_run_sender():
         if r.get("status") == "sent":
             inv = next((i for i in all_invs if i["id"] == r["invoice_id"]), None)
             sent_clients.append({"invoice_id": r["invoice_id"], "client_name": inv["client_name"] if inv else r["invoice_id"], "portal_record_id": r.get("portal_record_id")})
-    
+
     return {"sent_count": sent_count, "sent_clients": sent_clients, "results": results}
 
 
@@ -157,7 +157,18 @@ def api_clear_promise(reminder_id: int):
 
 
 @router.get("/api/promises")
-def api_promises(): return get_promise_summary()
+def api_promises():
+    # Trigger a sync so Swagger-only testing reflects client replies immediately
+    sync_promises()
+    return get_promise_summary()
+
+
+@router.post("/api/sync_promises")
+def api_sync_promises():
+    """Explicitly run promise sync and report the resulting summary.
+    Useful for testing without reloading the dashboard."""
+    sync_promises()
+    return {"ok": True, "summary": get_promise_summary()}
 
 
 def _get_pending_approvals() -> list:

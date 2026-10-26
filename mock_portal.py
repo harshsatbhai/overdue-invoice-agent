@@ -6,6 +6,7 @@ import random
 
 from ui.web_routes import router as dashboard_router
 
+
 def _trim_reminder_log(keep: int = 5) -> dict:
     try:
         from database import get_conn, init_db
@@ -23,15 +24,17 @@ def _trim_reminder_log(keep: int = 5) -> dict:
     except Exception as e:
         return {"error": str(e)}
 
+
 app = FastAPI(title="InvoiceChase Mock Billing Portal")
 app.include_router(dashboard_router)
+
 
 @app.on_event("startup")
 def _on_startup():
     result = _trim_reminder_log(keep=5)
     if "error" not in result:
         print(f"[startup] reminder_log trimmed: {result['before']} → {result['after']} rows")
-    
+
     try:
         from database import get_conn
         conn = get_conn()
@@ -44,6 +47,7 @@ def _on_startup():
     except Exception as e:
         print(f"[startup] ghost-row cleanup FAILED: {e}")
 
+
 INVOICES = {
     "INV-001": {"id": "INV-001", "client_name": "Acme Corp", "client_email": "billing@acme.example", "amount": 4500.00, "currency": "USD", "due_date": (datetime.utcnow() - timedelta(days=20)).strftime("%Y-%m-%d"), "status": "unpaid"},
     "INV-002": {"id": "INV-002", "client_name": "Beta LLC", "client_email": "accounts@beta.example", "amount": 1200.00, "currency": "USD", "due_date": (datetime.utcnow() - timedelta(days=5)).strftime("%Y-%m-%d"), "status": "unpaid"},
@@ -55,25 +59,30 @@ INVOICES = {
 SENT_REMINDERS = []
 CLIENT_REPLIES = {}
 
+
 class ReminderRequest(BaseModel):
     invoice_id: str
     to_email: str
     subject: str
     body: str
 
+
 class ReplyRequest(BaseModel):
     invoice_id: str
     message: str
 
+
 @app.get("/invoices")
 def list_invoices():
     return {"invoices": list(INVOICES.values())}
+
 
 @app.get("/invoices/{invoice_id}")
 def get_invoice(invoice_id: str):
     inv = INVOICES.get(invoice_id)
     if not inv: raise HTTPException(404, "Invoice not found")
     return inv
+
 
 @app.post("/send-reminder")
 def send_reminder(req: ReminderRequest):
@@ -91,21 +100,47 @@ def send_reminder(req: ReminderRequest):
 
     return {"portal_record_id": record_id, "status": "sent"}
 
+
 @app.get("/sent-reminders")
 def sent_reminders(invoice_id: str | None = None):
     if invoice_id:
         return {"sent": [r for r in SENT_REMINDERS if r["invoice_id"] == invoice_id]}
     return {"sent": SENT_REMINDERS}
 
-# --- New Endpoints for Simulated Inbox ---
+
+# --- Simulated Inbox ---
 @app.post("/simulate-client-reply")
 def simulate_reply(req: ReplyRequest):
+    """Record a simulated client reply, then immediately run promise
+    extraction so the result is visible in the response."""
     CLIENT_REPLIES[req.invoice_id] = req.message
-    return {"status": "reply received", "invoice_id": req.invoice_id}
+
+    extraction = {"ran": False, "promise_date": None, "error": None}
+    try:
+        from agent.promise_sync import sync_promises
+        from database import get_promise_summary
+        sync_promises()
+        summary = get_promise_summary()
+        match = next((p for p in summary["items"] if p["invoice_id"] == req.invoice_id), None)
+        extraction = {
+            "ran": True,
+            "promise_date": match["promise_to_pay_date"] if match else None,
+            "error": None if match else "no promise extracted (see server logs for raw LLM response)",
+        }
+    except Exception as e:
+        extraction = {"ran": True, "promise_date": None, "error": str(e)}
+
+    return {
+        "status": "reply received",
+        "invoice_id": req.invoice_id,
+        "extraction": extraction,
+    }
+
 
 @app.get("/client-replies")
 def get_replies():
     return CLIENT_REPLIES
+
 
 @app.get("/health")
 def health():
