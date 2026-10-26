@@ -45,28 +45,16 @@ Return JSON: {{"subject": "...", "body": "..."}}"""
 
 
 # ------------------------------------------------------------------
-# Flexible date parsing — accepts many formats the model may emit
-# and normalizes to ISO (YYYY-MM-DD). Returns None on failure.
+# Flexible date parsing
 # ------------------------------------------------------------------
 _DATE_FORMATS = [
-    "%Y-%m-%d",       # 2026-12-24
-    "%Y/%m/%d",       # 2026/12/24
-    "%d-%m-%Y",       # 24-12-2026
-    "%d/%m/%Y",       # 24/12/2026
-    "%d.%m.%Y",       # 24.12.2026
-    "%d %B %Y",       # 24 December 2026
-    "%d %b %Y",       # 24 Dec 2026
-    "%B %d, %Y",      # December 24, 2026
-    "%b %d, %Y",      # Dec 24, 2026
-    "%B %d %Y",       # December 24 2026
-    "%b %d %Y",       # Dec 24 2026
-    "%d-%B-%Y",       # 24-December-2026
-    "%d-%b-%Y",       # 24-Dec-2026
+    "%Y-%m-%d", "%Y/%m/%d", "%d-%m-%Y", "%d/%m/%Y", "%d.%m.%Y",
+    "%d %B %Y", "%d %b %Y", "%B %d, %Y", "%b %d, %Y",
+    "%B %d %Y", "%b %d %Y", "%d-%B-%Y", "%d-%b-%Y",
 ]
 
 
 def _normalize_date_string(s: str) -> str | None:
-    """Try every known format; return ISO date or None."""
     s = s.strip().strip('.,;:').strip()
     if not s:
         return None
@@ -79,14 +67,12 @@ def _normalize_date_string(s: str) -> str | None:
 
 
 def _parse_model_output(text: str, today: date) -> str | None:
-    """Given the model's raw answer, return ISO date or None.
-
-    Handles:
+    """Given a string, return ISO date or None. Handles:
       - Explicit NONE
-      - Strict fullmatch (model obeyed)
-      - "December 24th" / "24 December" / "Dec 24" (no year → next occurrence)
-      - ISO dates anywhere in prose (prefer last match)
-      - dd-mm-yyyy / dd/mm/yyyy anywhere
+      - Strict fullmatch
+      - ISO dates anywhere (prefer last)
+      - dd-mm-yyyy / dd/mm/yyyy (prefer last)
+      - Natural language month/day
     """
     text = text.strip()
     text = re.sub(r'^```[a-zA-Z]*\s*|\s*```$', '', text).strip()
@@ -94,12 +80,11 @@ def _parse_model_output(text: str, today: date) -> str | None:
     if re.fullmatch(r'NONE\.?', text, flags=re.IGNORECASE):
         return None
 
-    # Strict: whole response is a parseable date
     strict = _normalize_date_string(text)
     if strict:
         return strict
 
-    # 1) Try ISO anywhere — prefer last match (model often echoes reference first)
+    # ISO anywhere — prefer last
     iso_matches = re.findall(r'\b(\d{4})-(\d{2})-(\d{2})\b', text)
     for y, m, d in reversed(iso_matches):
         try:
@@ -107,7 +92,7 @@ def _parse_model_output(text: str, today: date) -> str | None:
         except ValueError:
             continue
 
-    # 2) dd-mm-yyyy / dd/mm/yyyy anywhere (day-first, non-ISO year at end)
+    # dd-mm-yyyy anywhere — prefer last
     dmy_matches = re.findall(r'\b(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})\b', text)
     for d, m, y in reversed(dmy_matches):
         try:
@@ -115,26 +100,26 @@ def _parse_model_output(text: str, today: date) -> str | None:
         except ValueError:
             continue
 
-    # 3) Natural language: "December 24th", "24 December", "Dec 24", "Dec 24 2026"
+    # Natural language: "December 24th", "24 December", "Dec 24 [2026]"
     month_names = r'(?:january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)'
 
-    # "December 24th [2026]"
-    for m in re.finditer(
+    # "December 24th [2026]" — prefer last occurrence
+    md_matches = list(re.finditer(
         rf'\b({month_names})\.?\s+(\d{{1,2}})(?:st|nd|rd|th)?(?:,?\s*(\d{{4}}))?\b',
         text, flags=re.IGNORECASE,
-    ):
-        month_s, day_s, year_s = m.group(1), m.group(2), m.group(3)
-        iso = _build_date(month_s, int(day_s), year_s, today)
+    ))
+    for m in reversed(md_matches):
+        iso = _build_date(m.group(1), int(m.group(2)), m.group(3), today)
         if iso:
             return iso
 
-    # "24th [of] December [2026]" or "24 December [2026]"
-    for m in re.finditer(
+    # "24th [of] December [2026]" — prefer last occurrence
+    dm_matches = list(re.finditer(
         rf'\b(\d{{1,2}})(?:st|nd|rd|th)?\s+(?:of\s+)?({month_names})\.?(?:,?\s*(\d{{4}}))?\b',
         text, flags=re.IGNORECASE,
-    ):
-        day_s, month_s, year_s = m.group(1), m.group(2), m.group(3)
-        iso = _build_date(month_s, int(day_s), year_s, today)
+    ))
+    for m in reversed(dm_matches):
+        iso = _build_date(m.group(2), int(m.group(1)), m.group(3), today)
         if iso:
             return iso
 
@@ -142,15 +127,12 @@ def _parse_model_output(text: str, today: date) -> str | None:
 
 
 def _build_date(month_name: str, day: int, year_str: str | None, today: date) -> str | None:
-    """Given month name + day + optional year, produce ISO. If no year,
-    pick the next occurrence on/after today."""
     month_num = _month_to_num(month_name)
     if not month_num:
         return None
     try:
         if year_str:
             return datetime(int(year_str), month_num, day).strftime("%Y-%m-%d")
-        # No year: this year if not yet passed, else next year
         candidate = date(today.year, month_num, day)
         if candidate < today:
             candidate = date(today.year + 1, month_num, day)
@@ -172,36 +154,55 @@ def _month_to_num(name: str) -> int | None:
 
 
 def extract_promise_date(client_message: str) -> str | None:
-    """Use LLM to extract the promised payment date from a client reply.
+    """Extract a promised payment date from a client reply.
+    Returns ISO (YYYY-MM-DD) or None.
 
-    Accepts many formats; always returns ISO (YYYY-MM-DD) or None.
+    Strategy:
+      1. Fast path: if the message itself contains a parseable date, return it
+         without calling the LLM (avoids reasoning-model quirks entirely).
+      2. Otherwise, call the LLM with a strict prompt and large token budget,
+         then parse the raw output (preferring the last date found, since
+         reasoning models mention the reference date first).
     """
+    today = datetime.utcnow().date()
+
+    # ── Fast path: parse the client's text directly ──
+    fast = _parse_model_output(client_message, today)
+    if fast:
+        print(f"  [LLM extract] fast-path parsed from client message: {fast}")
+        return fast
+
+    # ── LLM path: only needed for relative dates ("next Friday", "in two weeks") ──
     system = (
-        "You are a strict data-extraction bot. Read a client's email reply and "
-        "extract the date they promise to pay on.\n"
-        "Rules:\n"
-        "- Understand ALL common date formats: '24 December', 'December 24th', "
-        "'Dec 24', '24/12/2026', '24-12-2026', 'next Friday', 'in two weeks', "
-        "'end of the month', 'tomorrow', 'the 15th'.\n"
+        "You are a strict data-extraction bot. Extract the payment date the client "
+        "promises in the reply.\n\n"
+        "OUTPUT RULES — follow exactly:\n"
+        "- Do NOT explain, reason, restate the message, or add commentary.\n"
+        "- Your ENTIRE response must be ONE of:\n"
+        "    (a) a single ISO date in YYYY-MM-DD format, OR\n"
+        "    (b) the single word NONE.\n"
+        "- No quotes, no code fences, no punctuation around the date.\n\n"
+        "DATE RULES:\n"
+        "- Resolve relative dates against the reference date: 'next Friday', "
+        "'in two weeks', 'end of the month', 'tomorrow', 'the 15th'.\n"
         "- If a month/day is given without a year, use the NEXT occurrence on or "
         "after the reference date.\n"
-        "- Resolve relative dates against the reference date.\n"
-        "- Return ONLY the date in YYYY-MM-DD format.\n"
-        "- If no payment date is mentioned, return exactly: NONE\n"
         "- Do NOT return the reference date unless the client actually promises "
         "to pay on that date.\n"
-        "- No prose, no quotes, no explanation."
+        "- If no payment date is mentioned, return NONE."
     )
-    today = datetime.utcnow().date()
     user = (
-        f"Reference date (today): {today.isoformat()}\n"
+        f"Reference date: {today.isoformat()}\n"
         f"Client reply:\n\"\"\"\n{client_message}\n\"\"\"\n\n"
-        f"Return only the promised payment date as YYYY-MM-DD, or NONE."
+        f"Answer (single YYYY-MM-DD or NONE):"
     )
 
     for attempt in range(2):
         try:
-            raw = call_nemotron(system, user, temperature=0.0, max_tokens=64)
+            # 512 tokens: reasoning models can finish thinking and still emit
+            # the final answer on the last line. The parser prefers the last
+            # ISO date, so trailing reasoning does not cause the wrong answer.
+            raw = call_nemotron(system, user, temperature=0.0, max_tokens=512)
             log.warning("extract_promise_date raw (attempt %d): %r", attempt + 1, raw)
             print(f"  [LLM extract] raw response (attempt {attempt + 1}): {raw!r}")
         except Exception as e:
