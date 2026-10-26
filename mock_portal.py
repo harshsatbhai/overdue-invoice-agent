@@ -115,7 +115,7 @@ def simulate_reply(req: ReplyRequest):
     extraction so the result is visible in the response."""
     CLIENT_REPLIES[req.invoice_id] = req.message
 
-    extraction = {"ran": False, "promise_date": None, "error": None}
+    extraction = {"ran": False, "promise_date": None, "promise_display": None, "error": None}
     try:
         from agent.promise_sync import sync_promises
         from database import get_promise_summary
@@ -124,11 +124,12 @@ def simulate_reply(req: ReplyRequest):
         match = next((p for p in summary["items"] if p["invoice_id"] == req.invoice_id), None)
         extraction = {
             "ran": True,
-            "promise_date": match["promise_to_pay_date"] if match else None,
+            "promise_date": match["promise_to_pay_date"] if match else None,      # ISO
+            "promise_display": match["promise_display"] if match else None,      # dd-mm-yyyy
             "error": None if match else "no promise extracted (see server logs for raw LLM response)",
         }
     except Exception as e:
-        extraction = {"ran": True, "promise_date": None, "error": str(e)}
+        extraction = {"ran": True, "promise_date": None, "promise_display": None, "error": str(e)}
 
     return {
         "status": "reply received",

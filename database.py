@@ -1,19 +1,19 @@
 import sqlite3
 import json
-from datetime import datetime
+import os
+from datetime import datetime, date
 from config import Config
+
 
 def get_conn():
     conn = sqlite3.connect(Config.DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
 
-import os
 
 def init_db():
-    # Create the data directory if it doesn't exist (needed for Render)
     os.makedirs("data", exist_ok=True)
-    
+
     conn = get_conn()
     conn.executescript("""
         CREATE TABLE IF NOT EXISTS invoices (id TEXT PRIMARY KEY, client_name TEXT, client_email TEXT, amount REAL, currency TEXT, due_date TEXT, status TEXT DEFAULT 'unpaid', portal_invoice_id TEXT, last_synced_at TEXT);
@@ -23,6 +23,7 @@ def init_db():
     """)
     conn.commit()
     conn.close()
+
 
 def upsert_invoice(inv: dict):
     conn = get_conn()
@@ -34,17 +35,20 @@ def upsert_invoice(inv: dict):
     conn.commit()
     conn.close()
 
+
 def get_invoice(invoice_id: str):
     conn = get_conn()
     row = conn.execute("SELECT * FROM invoices WHERE id=?", (invoice_id,)).fetchone()
     conn.close()
     return dict(row) if row else None
 
+
 def get_all_invoices():
     conn = get_conn()
     rows = conn.execute("SELECT * FROM invoices").fetchall()
     conn.close()
     return [dict(r) for r in rows]
+
 
 def log_reminder(entry: dict) -> int:
     conn = get_conn()
@@ -57,17 +61,20 @@ def log_reminder(entry: dict) -> int:
     conn.close()
     return rid
 
+
 def get_reminder_log():
     conn = get_conn()
     rows = conn.execute("SELECT * FROM reminder_log ORDER BY id DESC").fetchall()
     conn.close()
     return [dict(r) for r in rows]
 
+
 def get_still_unpaid_total() -> float:
     conn = get_conn()
     row = conn.execute("SELECT COALESCE(SUM(amount), 0) as total FROM invoices WHERE status='unpaid'").fetchone()
     conn.close()
     return row["total"]
+
 
 def save_audit(invoice_id: str, action_type: str, payload: dict, idempotency_key: str) -> int:
     conn = get_conn()
@@ -77,11 +84,13 @@ def save_audit(invoice_id: str, action_type: str, payload: dict, idempotency_key
     conn.close()
     return aid
 
+
 def approve_audit(audit_id: int):
     conn = get_conn()
     conn.execute("UPDATE action_audit SET approved=1, executed_at=? WHERE id=?", (datetime.utcnow().isoformat(), audit_id))
     conn.commit()
     conn.close()
+
 
 def mark_audit_result(audit_id: int, result: str):
     conn = get_conn()
@@ -89,11 +98,13 @@ def mark_audit_result(audit_id: int, result: str):
     conn.commit()
     conn.close()
 
+
 def get_audit_by_key(key: str):
     conn = get_conn()
     row = conn.execute("SELECT * FROM action_audit WHERE idempotency_key=?", (key,)).fetchone()
     conn.close()
     return dict(row) if row else None
+
 
 def save_test_run(tc_id: str, input_json: str, expected: str, actual: str, evidence_json: str, passed: bool, notes: str):
     conn = get_conn()
@@ -101,27 +112,70 @@ def save_test_run(tc_id: str, input_json: str, expected: str, actual: str, evide
     conn.commit()
     conn.close()
 
+
+# ------------------------------------------------------------------
+# Date helpers
+# ------------------------------------------------------------------
+def _parse_flexible_date(s: str) -> date:
+    """Accept ISO, dd-mm-yyyy, dd/mm/yyyy, dd.mm.yyyy. Raise ValueError otherwise."""
+    s = (s or "").strip()
+    if not s:
+        raise ValueError("promise_date must not be empty")
+
+    for fmt in ("%Y-%m-%d", "%d-%m-%Y", "%d/%m/%Y", "%d.%m.%Y"):
+        try:
+            return datetime.strptime(s, fmt).date()
+        except ValueError:
+            continue
+    raise ValueError("promise_date must be ISO (YYYY-MM-DD) or dd-mm-yyyy")
+
+
+def _to_iso(d: date) -> str:
+    return d.strftime("%Y-%m-%d")
+
+
+def _to_display(iso: str | None) -> str | None:
+    """ISO -> dd-mm-yyyy for UI."""
+    if not iso:
+        return None
+    try:
+        return datetime.strptime(iso, "%Y-%m-%d").strftime("%d-%m-%Y")
+    except ValueError:
+        return iso
+
+
+# ------------------------------------------------------------------
+# Promise helpers
+# ------------------------------------------------------------------
 def update_promise(reminder_id: int, promise_date: str, note: str = "") -> dict:
-    from datetime import datetime as _dt
-    try: parsed = _dt.strptime(promise_date, "%Y-%m-%d").date()
-    except ValueError: raise ValueError("promise_date must be YYYY-MM-DD")
-    
+    """promise_date may be ISO or dd-mm-yyyy. Stored internally as ISO."""
+    parsed = _parse_flexible_date(promise_date)
+    iso = _to_iso(parsed)
+
     conn = get_conn()
     row = conn.execute("SELECT * FROM reminder_log WHERE id=?", (reminder_id,)).fetchone()
     if not row:
         conn.close()
         raise ValueError(f"reminder {reminder_id} not found")
 
-    ts = _dt.utcnow().isoformat()
-    suffix = f" | promise: {promise_date}"
-    if note: suffix += f" ({note})"
+    ts = datetime.utcnow().isoformat()
+    suffix = f" | promise: {iso}"
+    if note:
+        suffix += f" ({note})"
     new_notes = ((row["notes"] or "") + suffix).strip()
 
-    conn.execute("UPDATE reminder_log SET promise_to_pay_date=?, notes=? WHERE id=?", (promise_date, new_notes, reminder_id))
+    conn.execute(
+        "UPDATE reminder_log SET promise_to_pay_date=?, notes=? WHERE id=?",
+        (iso, new_notes, reminder_id),
+    )
     conn.commit()
     updated = conn.execute("SELECT * FROM reminder_log WHERE id=?", (reminder_id,)).fetchone()
     conn.close()
-    return dict(updated)
+
+    out = dict(updated)
+    out["promise_display"] = _to_display(out["promise_to_pay_date"])
+    return out
+
 
 def clear_promise(reminder_id: int) -> dict:
     conn = get_conn()
@@ -141,6 +195,7 @@ def clear_promise(reminder_id: int) -> dict:
     conn.close()
     return dict(updated)
 
+
 def get_promise_summary() -> dict:
     conn = get_conn()
     rows = conn.execute("""
@@ -150,16 +205,29 @@ def get_promise_summary() -> dict:
     """).fetchall()
     conn.close()
 
-    from datetime import date as _date
-    today = _date.today()
+    today = date.today()
     items = []
     for r in rows:
         d = r["promise_to_pay_date"]
-        try: days_until = (_date.fromisoformat(d) - today).days
-        except Exception: days_until = None
-        items.append({"reminder_id": r["id"], "invoice_id": r["invoice_id"], "client_name": r["client_name"], "amount": r["amount"], "currency": r["currency"], "invoice_status": r["invoice_status"], "promise_to_pay_date": d, "days_until": days_until, "overdue_promise": days_until is not None and days_until < 0})
+        try:
+            days_until = (date.fromisoformat(d) - today).days
+        except Exception:
+            days_until = None
+        items.append({
+            "reminder_id": r["id"],
+            "invoice_id": r["invoice_id"],
+            "client_name": r["client_name"],
+            "amount": r["amount"],
+            "currency": r["currency"],
+            "invoice_status": r["invoice_status"],
+            "promise_to_pay_date": d,             # ISO
+            "promise_display": _to_display(d),    # dd-mm-yyyy for UI
+            "days_until": days_until,
+            "overdue_promise": days_until is not None and days_until < 0,
+        })
 
     return {"items": items, "count": len(items), "overdue_promises": [x for x in items if x["overdue_promise"]]}
+
 
 def get_latest_sent_reminder_id(invoice_id: str):
     """Helper for promise sync: finds the most recent sent reminder without a promise."""

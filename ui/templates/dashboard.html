@@ -97,7 +97,7 @@
           {% for p in promise_summary["items"] %}
             <tr>
               <td>{{ p.invoice_id }}</td><td class="muted">{{ p.client_name }}</td>
-              <td><span class="badge {% if p.overdue_promise %}badge-promise-overdue{% else %}badge-promise{% endif %}">{{ p.promise_to_pay_date }}</span>
+              <td><span class="badge {% if p.overdue_promise %}badge-promise-overdue{% else %}badge-promise{% endif %}">{{ p.promise_display or p.promise_to_pay_date }}</span>
                 {% if p.days_until is not none %}<br/><span class="muted">{% if p.days_until < 0 %}past due{% elif p.days_until == 0 %}today{% else %}in {{ p.days_until }}d{% endif %}</span>{% endif %}
               </td>
             </tr>
@@ -189,9 +189,9 @@
             <td>{{ r.email_subject or "—" }}</td><td><span class="badge badge-{{ r.status }}">{{ r.status }}</span></td><td class="muted">{{ r.portal_record_id or "—" }}</td>
             <td>
               {% if r.promise_to_pay_date %}
-                <span class="badge badge-promise">{{ r.promise_to_pay_date }}</span>
+                <span class="badge badge-promise">{{ r.promise_display or r.promise_to_pay_date }}</span>
                 <span class="muted" style="font-size:10px;">(auto)</span>
-                <button class="btn btn-clear" title="Clear promise" onclick="openClearModal({{ r.id }}, '{{ r.invoice_id }}', '{{ r.promise_to_pay_date }}')">×</button>
+                <button class="btn btn-clear" title="Clear promise" onclick="openClearModal({{ r.id }}, '{{ r.invoice_id }}', '{{ r.promise_display or r.promise_to_pay_date }}')">×</button>
               {% else %}
                 <span class="muted">Awaiting reply...</span>
               {% endif %}

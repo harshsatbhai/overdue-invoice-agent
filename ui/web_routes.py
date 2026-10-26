@@ -39,6 +39,20 @@ def dashboard(request: Request):
     approved_pending_send = _get_approved_pending_send_count()
     promise_summary = get_promise_summary()
 
+    # Add dd-mm-yyyy display to reminder rows for the "Reminder Log" table
+    def _display_promise(iso):
+        if not iso:
+            return None
+        try:
+            return datetime.strptime(iso, "%Y-%m-%d").strftime("%d-%m-%Y")
+        except ValueError:
+            return iso
+
+    for r in sent:
+        r["promise_display"] = _display_promise(r.get("promise_to_pay_date"))
+    for r in pending_reminders:
+        r["promise_display"] = _display_promise(r.get("promise_to_pay_date"))
+
     return templates.TemplateResponse(
         "dashboard.html",
         {
@@ -138,15 +152,24 @@ def api_redraft_all():
 
 
 class PromiseRequest(BaseModel):
-    promise_date: str
+    promise_date: str   # accepts ISO or dd-mm-yyyy
     note: str = ""
 
 
 @router.post("/api/promise/{reminder_id}")
 def api_record_promise(reminder_id: int, req: PromiseRequest):
-    try: updated = update_promise(reminder_id, req.promise_date, req.note)
-    except ValueError as e: raise HTTPException(400, str(e))
-    return {"ok": True, "reminder_id": reminder_id, "promise_to_pay_date": updated["promise_to_pay_date"], "notes": updated["notes"], "invoice_id": updated.get("invoice_id")}
+    try:
+        updated = update_promise(reminder_id, req.promise_date, req.note)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {
+        "ok": True,
+        "reminder_id": reminder_id,
+        "promise_to_pay_date": updated["promise_to_pay_date"],       # ISO
+        "promise_display": updated.get("promise_display"),           # dd-mm-yyyy
+        "notes": updated["notes"],
+        "invoice_id": updated.get("invoice_id"),
+    }
 
 
 @router.delete("/api/promise/{reminder_id}")
@@ -165,8 +188,7 @@ def api_promises():
 
 @router.post("/api/sync_promises")
 def api_sync_promises():
-    """Explicitly run promise sync and report the resulting summary.
-    Useful for testing without reloading the dashboard."""
+    """Explicitly run promise sync and report the resulting summary."""
     sync_promises()
     return {"ok": True, "summary": get_promise_summary()}
 

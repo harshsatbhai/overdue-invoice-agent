@@ -2,7 +2,7 @@ import requests
 import json
 import re
 import logging
-from datetime import datetime
+from datetime import datetime, date, timedelta
 from config import Config
 
 log = logging.getLogger("llm_client")
@@ -44,23 +44,160 @@ Return JSON: {{"subject": "...", "body": "..."}}"""
     return {"subject": subject, "body": body}
 
 
-def extract_promise_date(client_message: str) -> str:
-    """Use LLM to extract a YYYY-MM-DD date from a client's reply.
+# ------------------------------------------------------------------
+# Flexible date parsing — accepts many formats the model may emit
+# and normalizes to ISO (YYYY-MM-DD). Returns None on failure.
+# ------------------------------------------------------------------
+_DATE_FORMATS = [
+    "%Y-%m-%d",       # 2026-12-24
+    "%Y/%m/%d",       # 2026/12/24
+    "%d-%m-%Y",       # 24-12-2026
+    "%d/%m/%Y",       # 24/12/2026
+    "%d.%m.%Y",       # 24.12.2026
+    "%d %B %Y",       # 24 December 2026
+    "%d %b %Y",       # 24 Dec 2026
+    "%B %d, %Y",      # December 24, 2026
+    "%b %d, %Y",      # Dec 24, 2026
+    "%B %d %Y",       # December 24 2026
+    "%b %d %Y",       # Dec 24 2026
+    "%d-%B-%Y",       # 24-December-2026
+    "%d-%b-%Y",       # 24-Dec-2026
+]
 
-    Returns None only if the model explicitly says NONE, or if extraction
-    fails after retries. Logs the raw LLM response on every attempt so
-    failures are diagnosable.
+
+def _normalize_date_string(s: str) -> str | None:
+    """Try every known format; return ISO date or None."""
+    s = s.strip().strip('.,;:').strip()
+    if not s:
+        return None
+    for fmt in _DATE_FORMATS:
+        try:
+            return datetime.strptime(s, fmt).strftime("%Y-%m-%d")
+        except ValueError:
+            continue
+    return None
+
+
+def _parse_model_output(text: str, today: date) -> str | None:
+    """Given the model's raw answer, return ISO date or None.
+
+    Handles:
+      - Explicit NONE
+      - Strict fullmatch (model obeyed)
+      - "December 24th" / "24 December" / "Dec 24" (no year → next occurrence)
+      - ISO dates anywhere in prose (prefer last match)
+      - dd-mm-yyyy / dd/mm/yyyy anywhere
+    """
+    text = text.strip()
+    text = re.sub(r'^```[a-zA-Z]*\s*|\s*```$', '', text).strip()
+
+    if re.fullmatch(r'NONE\.?', text, flags=re.IGNORECASE):
+        return None
+
+    # Strict: whole response is a parseable date
+    strict = _normalize_date_string(text)
+    if strict:
+        return strict
+
+    # 1) Try ISO anywhere — prefer last match (model often echoes reference first)
+    iso_matches = re.findall(r'\b(\d{4})-(\d{2})-(\d{2})\b', text)
+    for y, m, d in reversed(iso_matches):
+        try:
+            return datetime(int(y), int(m), int(d)).strftime("%Y-%m-%d")
+        except ValueError:
+            continue
+
+    # 2) dd-mm-yyyy / dd/mm/yyyy anywhere (day-first, non-ISO year at end)
+    dmy_matches = re.findall(r'\b(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})\b', text)
+    for d, m, y in reversed(dmy_matches):
+        try:
+            return datetime(int(y), int(m), int(d)).strftime("%Y-%m-%d")
+        except ValueError:
+            continue
+
+    # 3) Natural language: "December 24th", "24 December", "Dec 24", "Dec 24 2026"
+    month_names = r'(?:january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)'
+
+    # "December 24th [2026]"
+    for m in re.finditer(
+        rf'\b({month_names})\.?\s+(\d{{1,2}})(?:st|nd|rd|th)?(?:,?\s*(\d{{4}}))?\b',
+        text, flags=re.IGNORECASE,
+    ):
+        month_s, day_s, year_s = m.group(1), m.group(2), m.group(3)
+        iso = _build_date(month_s, int(day_s), year_s, today)
+        if iso:
+            return iso
+
+    # "24th [of] December [2026]" or "24 December [2026]"
+    for m in re.finditer(
+        rf'\b(\d{{1,2}})(?:st|nd|rd|th)?\s+(?:of\s+)?({month_names})\.?(?:,?\s*(\d{{4}}))?\b',
+        text, flags=re.IGNORECASE,
+    ):
+        day_s, month_s, year_s = m.group(1), m.group(2), m.group(3)
+        iso = _build_date(month_s, int(day_s), year_s, today)
+        if iso:
+            return iso
+
+    return None
+
+
+def _build_date(month_name: str, day: int, year_str: str | None, today: date) -> str | None:
+    """Given month name + day + optional year, produce ISO. If no year,
+    pick the next occurrence on/after today."""
+    month_num = _month_to_num(month_name)
+    if not month_num:
+        return None
+    try:
+        if year_str:
+            return datetime(int(year_str), month_num, day).strftime("%Y-%m-%d")
+        # No year: this year if not yet passed, else next year
+        candidate = date(today.year, month_num, day)
+        if candidate < today:
+            candidate = date(today.year + 1, month_num, day)
+        return candidate.strftime("%Y-%m-%d")
+    except ValueError:
+        return None
+
+
+_MONTH_MAP = {
+    "jan": 1, "january": 1, "feb": 2, "february": 2, "mar": 3, "march": 3,
+    "apr": 4, "april": 4, "may": 5, "jun": 6, "june": 6, "jul": 7, "july": 7,
+    "aug": 8, "august": 8, "sep": 9, "sept": 9, "september": 9,
+    "oct": 10, "october": 10, "nov": 11, "november": 11, "dec": 12, "december": 12,
+}
+
+
+def _month_to_num(name: str) -> int | None:
+    return _MONTH_MAP.get(name.strip().lower().rstrip("."))
+
+
+def extract_promise_date(client_message: str) -> str | None:
+    """Use LLM to extract the promised payment date from a client reply.
+
+    Accepts many formats; always returns ISO (YYYY-MM-DD) or None.
     """
     system = (
-        "You are a data extraction bot. Extract the promised payment date "
-        "from the client's message. Today's date is provided for reference. "
-        "Return ONLY the date in YYYY-MM-DD format, with no other text. "
-        "If the client gives a relative date (e.g. 'next Friday', 'in two weeks', "
-        "'the 15th'), resolve it against today's date. "
-        "If no payment date is mentioned, return exactly: NONE"
+        "You are a strict data-extraction bot. Read a client's email reply and "
+        "extract the date they promise to pay on.\n"
+        "Rules:\n"
+        "- Understand ALL common date formats: '24 December', 'December 24th', "
+        "'Dec 24', '24/12/2026', '24-12-2026', 'next Friday', 'in two weeks', "
+        "'end of the month', 'tomorrow', 'the 15th'.\n"
+        "- If a month/day is given without a year, use the NEXT occurrence on or "
+        "after the reference date.\n"
+        "- Resolve relative dates against the reference date.\n"
+        "- Return ONLY the date in YYYY-MM-DD format.\n"
+        "- If no payment date is mentioned, return exactly: NONE\n"
+        "- Do NOT return the reference date unless the client actually promises "
+        "to pay on that date.\n"
+        "- No prose, no quotes, no explanation."
     )
-    today = datetime.utcnow().strftime("%Y-%m-%d")
-    user = f"Today's date: {today}\nClient message: '{client_message}'"
+    today = datetime.utcnow().date()
+    user = (
+        f"Reference date (today): {today.isoformat()}\n"
+        f"Client reply:\n\"\"\"\n{client_message}\n\"\"\"\n\n"
+        f"Return only the promised payment date as YYYY-MM-DD, or NONE."
+    )
 
     for attempt in range(2):
         try:
@@ -72,30 +209,11 @@ def extract_promise_date(client_message: str) -> str:
             print(f"  [LLM extract error (attempt {attempt + 1}): {e}]")
             continue
 
-        text = raw.strip()
-        # Strip markdown fences if the model wraps its answer
-        text = re.sub(r'^```[a-zA-Z]*\s*|\s*```$', '', text).strip()
+        iso = _parse_model_output(raw, today)
+        if iso:
+            print(f"  [LLM extract] parsed date: {iso}")
+            return iso
 
-        # Explicit NONE — check as a whole token, not a substring
-        if re.fullmatch(r'NONE\.?', text, flags=re.IGNORECASE):
-            log.warning("extract_promise_date: model returned NONE for message %r", client_message)
-            print(f"  [LLM extract] model explicitly returned NONE")
-            return None
-
-        # Look for ISO date anywhere in the response
-        match = re.search(r'\b(\d{4})-(\d{2})-(\d{2})\b', text)
-        if match:
-            candidate = match.group(0)
-            try:
-                datetime.strptime(candidate, "%Y-%m-%d")
-                log.warning("extract_promise_date: extracted %s from %r", candidate, client_message)
-                print(f"  [LLM extract] parsed date: {candidate}")
-                return candidate
-            except ValueError:
-                log.warning("extract_promise_date: invalid date %r in raw %r", candidate, raw)
-                print(f"  [LLM extract] invalid date value: {candidate}")
-
-        log.warning("extract_promise_date: no ISO date found in raw %r (attempt %d)", raw, attempt + 1)
-        print(f"  [LLM extract] no ISO date found in response (attempt {attempt + 1})")
+        print(f"  [LLM extract] no date found in response (attempt {attempt + 1})")
 
     return None
