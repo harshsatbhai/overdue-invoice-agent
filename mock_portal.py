@@ -1,6 +1,6 @@
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 import uuid
 import random
 
@@ -25,16 +25,147 @@ def _trim_reminder_log(keep: int = 5) -> dict:
         return {"error": str(e)}
 
 
+def _seed_demo_promises() -> int:
+    """Insert two sent-reminder rows with promise dates so the dashboard
+    shows a populated 'Promised Dates' card and Reminder Log on a fresh
+    instance. Returns number of promises inserted."""
+    from database import get_conn, log_reminder
+
+    conn = get_conn()
+    existing = conn.execute(
+        "SELECT COUNT(*) AS n FROM reminder_log WHERE promise_to_pay_date IS NOT NULL"
+    ).fetchone()["n"]
+    conn.close()
+
+    if existing:
+        return 0
+
+    today = date.today()
+
+    # INV-001: promised 3 days from now (Acme Corp)
+    promise_a = (today + timedelta(days=3)).isoformat()
+    log_reminder({
+        "invoice_id": "INV-001",
+        "tone": "firm",
+        "email_subject": "Payment overdue: Invoice INV-001",
+        "email_body": (
+            "Dear Acme Corp,\n\n"
+            "This is a follow-up on Invoice INV-001 for USD 4500.00, which is now "
+            "overdue. Could you please confirm when payment will be sent?\n\n"
+            "Best regards,\n[Your Name]"
+        ),
+        "sent_at": (datetime.utcnow() - timedelta(days=2)).isoformat(),
+        "portal_record_id": f"PRT-{uuid.uuid4().hex[:8]}",
+        "status": "sent",
+        "approved_at": (datetime.utcnow() - timedelta(days=2)).isoformat(),
+        "promise_to_pay_date": promise_a,
+        "notes": "Seeded on startup | promise: " + promise_a + " (demo seed)",
+    })
+
+    # INV-003: promised 10 days from now (Gamma Inc)
+    promise_b = (today + timedelta(days=10)).isoformat()
+    log_reminder({
+        "invoice_id": "INV-003",
+        "tone": "final_notice",
+        "email_subject": "Final notice: Invoice INV-003",
+        "email_body": (
+            "Dear Gamma Inc,\n\n"
+            "Despite previous reminders, Invoice INV-003 for USD 800.00 remains "
+            "outstanding. Please confirm payment date.\n\n"
+            "Best regards,\n[Your Name]"
+        ),
+        "sent_at": (datetime.utcnow() - timedelta(days=1)).isoformat(),
+        "portal_record_id": f"PRT-{uuid.uuid4().hex[:8]}",
+        "status": "sent",
+        "approved_at": (datetime.utcnow() - timedelta(days=1)).isoformat(),
+        "promise_to_pay_date": promise_b,
+        "notes": "Seeded on startup | promise: " + promise_b + " (demo seed)",
+    })
+
+    # INV-002: one existing send without a promise, so 'Awaiting reply...' shows
+    log_reminder({
+        "invoice_id": "INV-002",
+        "tone": "friendly",
+        "email_subject": "Friendly reminder: Invoice INV-002",
+        "email_body": (
+            "Dear Beta LLC,\n\n"
+            "A gentle reminder that Invoice INV-002 for USD 1200.00 is due. "
+            "Could you let me know when payment will be arranged?\n\n"
+            "Best regards,\n[Your Name]"
+        ),
+        "sent_at": (datetime.utcnow() - timedelta(hours=6)).isoformat(),
+        "portal_record_id": f"PRT-{uuid.uuid4().hex[:8]}",
+        "status": "sent",
+        "approved_at": (datetime.utcnow() - timedelta(hours=6)).isoformat(),
+        "promise_to_pay_date": None,
+        "notes": "Seeded on startup (demo seed)",
+    })
+
+    return 2
+
+
+def _seed_if_empty() -> dict:
+    """Populate a fresh instance so the dashboard is not empty on first load."""
+    from database import init_db, get_all_invoices
+    from agent.collector import collect_overdue_invoices
+
+    init_db()
+
+    seeded = {"invoices": 0, "drafts": 0, "promises": 0, "skipped": False}
+
+    if get_all_invoices():
+        seeded["skipped"] = True
+        return seeded
+
+    # 1) Pull invoices from the portal into the local DB
+    try:
+        invs = collect_overdue_invoices()
+        seeded["invoices"] = len(invs)
+    except Exception as e:
+        print(f"[startup-seed] invoice collection failed: {e}")
+
+    # 2) Create three draft reminders (one per tone) for Pending Approvals
+    try:
+        from agent.actor import redraft_all_pending
+        result = redraft_all_pending()
+        seeded["drafts"] = result.get("created", 0)
+    except Exception as e:
+        print(f"[startup-seed] redraft failed: {e}")
+
+    # 3) Seed two promise dates for the Promised Dates card / Reminder Log
+    try:
+        seeded["promises"] = _seed_demo_promises()
+    except Exception as e:
+        print(f"[startup-seed] promise seed failed: {e}")
+
+    return seeded
+
+
 app = FastAPI(title="InvoiceChase Mock Billing Portal")
 app.include_router(dashboard_router)
 
 
 @app.on_event("startup")
 def _on_startup():
+    # 0) Seed first so the dashboard is populated on a fresh deploy
+    try:
+        seed = _seed_if_empty()
+        if seed["skipped"]:
+            print("[startup-seed] DB already populated; skipping seed")
+        else:
+            print(
+                f"[startup-seed] seeded invoices={seed['invoices']} "
+                f"drafts={seed['drafts']} promises={seed['promises']}"
+            )
+    except Exception as e:
+        print(f"[startup-seed] FAILED: {e}")
+
+    # 1) Trim old reminder log rows (keeps dashboard tidy)
     result = _trim_reminder_log(keep=5)
     if "error" not in result:
         print(f"[startup] reminder_log trimmed: {result['before']} → {result['after']} rows")
 
+    # 2) Clear approved-but-unsent ghost rows
     try:
         from database import get_conn
         conn = get_conn()
