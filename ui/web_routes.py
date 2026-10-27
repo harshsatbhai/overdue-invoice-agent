@@ -239,19 +239,50 @@ def _set_audit_decision(audit_id: int, approved: bool) -> dict:
     if not row:
         conn.close()
         raise HTTPException(404, f"audit row {audit_id} not found")
+
+    # Guard: already approved
     if row["approved"] == 1 and approved:
         conn.close()
         raise HTTPException(409, "already approved")
 
+    # Guard: already rejected — idempotent, do not write a second reminder_log row
+    if not approved and row["result"] == "rejected_by_human":
+        conn.close()
+        return {"ok": True, "audit_id": audit_id, "approved": False, "already_rejected": True}
+
     now = datetime.utcnow().isoformat()
-    conn.execute("UPDATE action_audit SET approved=?, executed_at=? WHERE id=?", (1 if approved else 0, now, audit_id))
+
+    if approved:
+        conn.execute(
+            "UPDATE action_audit SET approved=1, executed_at=? WHERE id=?",
+            (now, audit_id),
+        )
+        conn.commit()
+        conn.close()
+        return {"ok": True, "audit_id": audit_id, "approved": True}
+
+    # ── Reject path ──
+    # 1) Mark the audit row resolved so it leaves Pending Approvals
+    #    (result='rejected_by_human' is excluded by _get_pending_approvals'
+    #    "result IS NULL OR result=''" filter).
+    conn.execute(
+        "UPDATE action_audit SET approved=0, executed_at=?, result='rejected_by_human' WHERE id=?",
+        (now, audit_id),
+    )
     conn.commit()
     conn.close()
 
-    if not approved:
-        from database import log_reminder
-        try: payload = json.loads(row["proposed_payload"])
-        except Exception: payload = {}
-        log_reminder({"invoice_id": row["invoice_id"], "tone": payload.get("tone", "unknown"), "email_subject": payload.get("subject", ""), "email_body": payload.get("body", ""), "status": "rejected", "notes": f"rejected via dashboard at {now}"})
+    # 2) Log the rejection once in reminder_log so it shows in the Reminder Log
+    from database import log_reminder
+    try: payload = json.loads(row["proposed_payload"])
+    except Exception: payload = {}
+    log_reminder({
+        "invoice_id": row["invoice_id"],
+        "tone": payload.get("tone", "unknown"),
+        "email_subject": payload.get("subject", ""),
+        "email_body": payload.get("body", ""),
+        "status": "rejected",
+        "notes": f"rejected via dashboard at {now}",
+    })
 
-    return {"ok": True, "audit_id": audit_id, "approved": approved}
+    return {"ok": True, "audit_id": audit_id, "approved": False}
