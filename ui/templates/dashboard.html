@@ -31,6 +31,8 @@
     .badge-fail { background: #fecaca; color: #991b1b; }
     .badge-promise { background: #dcfce7; color: #166534; }
     .badge-promise-overdue { background: #fecaca; color: #991b1b; }
+    /* Larger variant for the Promised Dates card */
+    .badge-promise-lg { font-size: 16px; padding: 4px 12px; border-radius: 12px; }
     .btn { border: 0; padding: 6px 12px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer; margin-right: 4px; }
     .btn-approve { background: #16a34a; color: #fff; } .btn-approve:hover { background: #15803d; }
     .btn-reject { background: #dc2626; color: #fff; } .btn-reject:hover { background: #b91c1c; }
@@ -62,6 +64,7 @@
     .btn-cancel { background: #e5e7eb; color: #374151; padding: 8px 16px; border-radius: 6px; font-size: 13px; font-weight: 600; border: 0; cursor: pointer; } .btn-cancel:hover { background: #d1d5db; }
     .btn-danger { background: #dc2626; color: #fff; padding: 8px 16px; border-radius: 6px; font-size: 13px; font-weight: 600; border: 0; cursor: pointer; } .btn-danger:hover { background: #b91c1c; }
     .btn-primary { background: #2563eb; color: #fff; padding: 8px 16px; border-radius: 6px; font-size: 13px; font-weight: 600; border: 0; cursor: pointer; } .btn-primary:hover { background: #1d4ed8; } .btn-primary:disabled { background: #9ca3af; cursor: not-allowed; }
+    .btn-purple { background: #7c3aed; color: #fff; padding: 8px 16px; border-radius: 6px; font-size: 13px; font-weight: 600; border: 0; cursor: pointer; } .btn-purple:hover { background: #6d28d9; } .btn-purple:disabled { background: #9ca3af; cursor: not-allowed; }
     .modal .invoice-context { background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 6px; padding: 10px; font-size: 12px; margin-bottom: 14px; }
     .client-list { background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 6px; padding: 10px; margin-bottom: 14px; max-height: 220px; overflow-y: auto; }
     .client-list table { font-size: 12px; } .client-list td { padding: 6px 4px; }
@@ -98,7 +101,7 @@
           {% for p in promise_summary["items"] %}
             <tr>
               <td>{{ p.invoice_id }}</td><td class="muted">{{ p.client_name }}</td>
-              <td><span class="badge {% if p.overdue_promise %}badge-promise-overdue{% else %}badge-promise{% endif %}">{{ p.promise_display or p.promise_to_pay_date }}</span>
+              <td><span class="badge badge-promise-lg {% if p.overdue_promise %}badge-promise-overdue{% else %}badge-promise{% endif %}">{{ p.promise_display or p.promise_to_pay_date }}</span>
                 {% if p.days_until is not none %}<br/><span class="muted">{% if p.days_until < 0 %}past due{% elif p.days_until == 0 %}today{% else %}in {{ p.days_until }}d{% endif %}</span>{% endif %}
               </td>
             </tr>
@@ -149,7 +152,7 @@
           <button id="next-btn" onclick="carouselNext()" title="Next draft">›</button>
         </div>
         {% endif %}
-        <button class="btn btn-redraft" id="redraft-btn" onclick="redraftAll()">Draft All Overdue Invoices</button>
+        <button class="btn btn-redraft" id="redraft-btn" onclick="openRedraftConfirm()">Draft All Overdue Invoices</button>
         <span id="redraft-status" class="muted" style="margin-left:8px;"></span>
       </div>
     </div>
@@ -226,6 +229,16 @@
     </div>
   </div>
 
+  <!-- NEW: Draft-all confirmation modal -->
+  <div class="modal-backdrop" id="redraft-confirm-modal">
+    <div class="modal" role="dialog" aria-modal="true">
+      <h3>Draft reminders for all overdue invoices?</h3>
+      <p>This will <strong>replace</strong> any existing pending drafts with fresh drafts for every overdue invoice, using the tone that matches each invoice's days overdue.</p>
+      <div class="client-list" id="redraft-invoice-list"><div class="muted">Loading…</div></div>
+      <div class="actions"><button class="btn-cancel" onclick="closeRedraftConfirm()">Cancel</button><button class="btn-purple" id="redraft-confirm-btn" onclick="confirmRedraftAll()">Draft Now</button></div>
+    </div>
+  </div>
+
   <div class="modal-backdrop" id="send-confirm-modal">
     <div class="modal" role="dialog" aria-modal="true">
       <h3>Send reminder emails?</h3>
@@ -269,6 +282,55 @@
       } catch (e) { alert(`Failed: ${e.message}`); }
     }
 
+    // ── Draft-all: open confirmation modal ──
+    async function openRedraftConfirm() {
+      const list = document.getElementById("redraft-invoice-list");
+      list.innerHTML = '<div class="muted">Loading…</div>';
+      document.getElementById("redraft-confirm-modal").classList.add("open");
+      document.getElementById("redraft-confirm-btn").disabled = false;
+      try {
+        // Reuse the invoices already rendered by the server (unpaid, not disputed).
+        const r = await fetch("/invoices");
+        if (!r.ok) throw new Error(r.statusText);
+        const data = await r.json();
+        const eligible = (data.invoices || []).filter(i => i.status !== "paid" && i.status !== "disputed");
+        if (eligible.length === 0) {
+          list.innerHTML = '<div class="muted">No eligible invoices to draft.</div>';
+          document.getElementById("redraft-confirm-btn").disabled = true;
+          return;
+        }
+        const today = new Date();
+        const rows = eligible.map(i => {
+          const due = new Date(i.due_date + "T00:00:00");
+          const days = Math.floor((today - due) / 86400000);
+          return `<tr><td><strong>${i.id}</strong> · ${i.client_name}</td><td class="muted">${i.currency} ${i.amount.toFixed(2)}</td><td><span class="badge badge-unpaid">${days > 0 ? days + "d" : "not due"}</span></td></tr>`;
+        }).join("");
+        list.innerHTML = `<table><tbody>${rows}</tbody></table>`;
+      } catch (e) {
+        list.innerHTML = `<div class="muted">Error: ${e.message}</div>`;
+        document.getElementById("redraft-confirm-btn").disabled = true;
+      }
+    }
+
+    function closeRedraftConfirm() { document.getElementById("redraft-confirm-modal").classList.remove("open"); }
+
+    async function confirmRedraftAll() {
+      const btn = document.getElementById("redraft-confirm-btn");
+      const status = document.getElementById("redraft-status");
+      btn.disabled = true; btn.textContent = "Drafting…";
+      try {
+        const r = await fetch("/api/redraft_all", { method: "POST" });
+        const data = await r.json();
+        if (!r.ok) throw new Error(data.detail || r.statusText);
+        closeRedraftConfirm();
+        status.textContent = `Drafted ${data.created} reminder(s). Reloading…`;
+        setTimeout(() => window.location.reload(), 800);
+      } catch (e) {
+        btn.disabled = false; btn.textContent = "Draft Now";
+        alert(`Failed: ${e.message}`);
+      }
+    }
+
     async function openSendConfirm() {
       const list = document.getElementById("send-client-list");
       list.innerHTML = '<div class="muted">Loading…</div>';
@@ -298,17 +360,6 @@
 
     function closeSendSuccess() { document.getElementById("send-success-modal").classList.remove("open"); window.location.reload(); }
 
-    async function redraftAll() {
-      if (!confirm("Draft reminders for all overdue invoices? Existing pending drafts will be replaced.")) return;
-      const btn = document.getElementById("redraft-btn"), status = document.getElementById("redraft-status");
-      btn.disabled = true; status.textContent = "Drafting…";
-      try {
-        const r = await fetch("/api/redraft_all", { method: "POST" }); const data = await r.json();
-        if (!r.ok) throw new Error(data.detail || r.statusText);
-        status.textContent = `Drafted ${data.created} reminder(s). Reloading…`; setTimeout(() => window.location.reload(), 800);
-      } catch (e) { status.textContent = `Error: ${e.message}`; btn.disabled = false; }
-    }
-
     let _pendingClearId = null;
     function openClearModal(id, invId, date) { _pendingClearId = id; document.getElementById("clear-invoice").textContent = invId; document.getElementById("clear-date").textContent = date; document.getElementById("clear-modal").classList.add("open"); }
     function closeClearModal() { _pendingClearId = null; document.getElementById("clear-modal").classList.remove("open"); }
@@ -324,7 +375,11 @@
     }
 
     document.addEventListener("keydown", (e) => {
-      if (e.key === "Escape") { if (document.getElementById("clear-modal").classList.contains("open")) closeClearModal(); if (document.getElementById("send-confirm-modal").classList.contains("open")) closeSendConfirm(); }
+      if (e.key === "Escape") {
+        if (document.getElementById("clear-modal").classList.contains("open")) closeClearModal();
+        if (document.getElementById("send-confirm-modal").classList.contains("open")) closeSendConfirm();
+        if (document.getElementById("redraft-confirm-modal").classList.contains("open")) closeRedraftConfirm();
+      }
     });
   </script>
 </body>
