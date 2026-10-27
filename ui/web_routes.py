@@ -33,6 +33,7 @@ def dashboard(request: Request):
 
     sent = [r for r in reminders if r["status"] == "sent"]
     pending_reminders = [r for r in reminders if r["status"] == "pending"]
+    rejected_reminders = [r for r in reminders if r["status"] == "rejected"]
     excluded = [i for i in invoices if i["status"] in ("paid", "disputed")]
     unresolved = _get_unresolved(invoices)
     test_runs = _get_test_runs()
@@ -52,12 +53,15 @@ def dashboard(request: Request):
         r["promise_display"] = _display_promise(r.get("promise_to_pay_date"))
     for r in pending_reminders:
         r["promise_display"] = _display_promise(r.get("promise_to_pay_date"))
+    for r in rejected_reminders:
+        r["promise_display"] = _display_promise(r.get("promise_to_pay_date"))
 
     return templates.TemplateResponse(
         "dashboard.html",
         {
             "request": request, "unpaid_total": unpaid_total, "invoices": invoices,
             "sent_reminders": sent, "pending_reminders": pending_reminders,
+            "rejected_reminders": rejected_reminders,
             "pending_approvals": pending, "excluded_invoices": excluded,
             "unresolved_invoices": unresolved, "test_runs": test_runs,
             "approved_pending_send": approved_pending_send, "promise_summary": promise_summary,

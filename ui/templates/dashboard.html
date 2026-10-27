@@ -26,6 +26,7 @@
     .badge-final_notice { background: #fecaca; color: #7f1d1d; }
     .badge-sent { background: #bbf7d0; color: #166534; }
     .badge-pending { background: #fef3c7; color: #92400e; }
+    .badge-rejected { background: #fecaca; color: #991b1b; }
     .badge-pass { background: #bbf7d0; color: #166534; }
     .badge-fail { background: #fecaca; color: #991b1b; }
     .badge-promise { background: #dcfce7; color: #166534; }
@@ -181,14 +182,16 @@
   </div>
 
   <div class="card">
-    <h2>Reminder Log ({{ sent_reminders | length }} sent · {{ pending_reminders | length }} pending)</h2>
-    {% if sent_reminders or pending_reminders %}
+    <h2>Reminder Log ({{ sent_reminders | length }} sent · {{ pending_reminders | length }} pending · {{ rejected_reminders | length }} rejected)</h2>
+    {% if sent_reminders or pending_reminders or rejected_reminders %}
       <table><thead><tr><th>Sent At</th><th>Invoice</th><th>Tone</th><th>Subject</th><th>Status</th><th>Portal Record</th><th>Promise to Pay</th></tr></thead><tbody>
-        {% for r in sent_reminders + pending_reminders %}
+        {% for r in sent_reminders + pending_reminders + rejected_reminders %}
           <tr><td class="muted">{{ r.sent_at or "—" }}</td><td>{{ r.invoice_id }}</td><td><span class="badge badge-{{ r.tone }}">{{ r.tone }}</span></td>
             <td>{{ r.email_subject or "—" }}</td><td><span class="badge badge-{{ r.status }}">{{ r.status }}</span></td><td class="muted">{{ r.portal_record_id or "—" }}</td>
             <td>
-              {% if r.promise_to_pay_date %}
+              {% if r.status == "rejected" %}
+                <span class="muted">—</span>
+              {% elif r.promise_to_pay_date %}
                 <span class="badge badge-promise">{{ r.promise_display or r.promise_to_pay_date }}</span>
                 <span class="muted" style="font-size:10px;">(auto)</span>
                 <button class="btn btn-clear" title="Clear promise" onclick="openClearModal({{ r.id }}, '{{ r.invoice_id }}', '{{ r.promise_display or r.promise_to_pay_date }}')">×</button>
