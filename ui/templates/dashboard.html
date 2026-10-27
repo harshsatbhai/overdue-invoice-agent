@@ -176,7 +176,7 @@
     <table><thead><tr><th>Invoice</th><th>Client</th><th>Amount</th><th>Status</th><th>Portal ID</th><th>Last Synced</th></tr></thead><tbody>
       {% for inv in invoices %}
         <tr><td>{{ inv.id }}</td><td>{{ inv.client_name }}</td><td>{{ inv.currency }} {{ "%.2f"|format(inv.amount) }}</td>
-          <td><span class="badge badge-{{ inv.status }}">{{ inv.status }}</span></td><td class="muted">{{ inv.portal_invoice_id or "—" }}</td><td class="muted">{{ inv.last_synced_at or "—" }}</td></tr>
+          <td><span class="badge badge-{{ inv.status }}">{{ inv.status }}</span></td><td class="muted">{{ inv.portal_invoice_id or "—" }}</td><td class="muted">{{ inv.last_synced_at | fmt_dt }}</td></tr>
       {% endfor %}
     </tbody></table>
   </div>
@@ -186,7 +186,7 @@
     {% if sent_reminders or pending_reminders or rejected_reminders %}
       <table><thead><tr><th>Sent At</th><th>Invoice</th><th>Tone</th><th>Subject</th><th>Status</th><th>Portal Record</th><th>Promise to Pay</th></tr></thead><tbody>
         {% for r in sent_reminders + pending_reminders + rejected_reminders %}
-          <tr><td class="muted">{{ r.sent_at or "—" }}</td><td>{{ r.invoice_id }}</td><td><span class="badge badge-{{ r.tone }}">{{ r.tone }}</span></td>
+          <tr><td class="muted">{{ r.sent_at | fmt_dt }}</td><td>{{ r.invoice_id }}</td><td><span class="badge badge-{{ r.tone }}">{{ r.tone }}</span></td>
             <td>{{ r.email_subject or "—" }}</td><td><span class="badge badge-{{ r.status }}">{{ r.status }}</span></td><td class="muted">{{ r.portal_record_id or "—" }}</td>
             <td>
               {% if r.status == "rejected" %}
@@ -211,7 +211,7 @@
         {% for t in test_runs %}
           <tr><td><strong>{{ t.tc_id }}</strong></td><td>{{ t.expected }}</td><td>{{ t.actual }}</td>
             <td>{% if t.passed %}<span class="badge badge-pass">PASS</span>{% else %}<span class="badge badge-fail">FAIL</span>{% endif %}</td>
-            <td><details><summary>view JSON</summary><pre class="evidence">{{ t.evidence_json }}</pre>{% if t.notes %}<div class="muted">notes: {{ t.notes }}</div>{% endif %}<div class="muted">run at: {{ t.run_at }}</div></details></td></tr>
+            <td><details><summary>view JSON</summary><pre class="evidence">{{ t.evidence_json }}</pre>{% if t.notes %}<div class="muted">notes: {{ t.notes }}</div>{% endif %}<div class="muted">run at: {{ t.run_at | fmt_dt }}</div></details></td></tr>
         {% endfor %}
       </tbody></table>
     {% else %}<div class="empty">No test runs yet. Approve and send a reminder to generate evidence.</div>{% endif %}

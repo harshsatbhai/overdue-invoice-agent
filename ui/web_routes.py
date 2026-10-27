@@ -21,6 +21,29 @@ TEMPLATES_DIR = Path(__file__).parent / "templates"
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
 
+# ------------------------------------------------------------------
+# Template filters
+# ------------------------------------------------------------------
+def _fmt_dt(iso: str) -> str:
+    """Render a stored ISO timestamp as 'YYYY-MM-DD HH:MM:SS'.
+
+    Handles:
+      - None / empty -> '—'
+      - '2026-10-27T13:31:07.123456' -> '2026-10-27 13:31:07'
+      - '2026-10-27T13:31:07Z'       -> '2026-10-27 13:31:07'
+      - malformed input              -> returns input unchanged
+    """
+    if not iso:
+        return "—"
+    try:
+        return datetime.fromisoformat(iso.replace("Z", "")).strftime("%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return iso
+
+
+templates.env.filters["fmt_dt"] = _fmt_dt
+
+
 @router.get("/dashboard", response_class=HTMLResponse)
 def dashboard(request: Request):
     # Auto-sync promises before rendering
