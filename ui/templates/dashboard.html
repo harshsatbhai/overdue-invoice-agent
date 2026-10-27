@@ -193,7 +193,6 @@
                 <span class="muted">—</span>
               {% elif r.promise_to_pay_date %}
                 <span class="badge badge-promise">{{ r.promise_display or r.promise_to_pay_date }}</span>
-                <span class="muted" style="font-size:10px;">(auto)</span>
                 <button class="btn btn-clear" title="Clear promise" onclick="openClearModal({{ r.id }}, '{{ r.invoice_id }}', '{{ r.promise_display or r.promise_to_pay_date }}')">×</button>
               {% else %}
                 <span class="muted">Awaiting reply...</span>
